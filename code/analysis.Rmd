@@ -1,0 +1,576 @@
+---
+title: "STAT143_Project"
+author: "Nancy Li"
+date: "2024-04-27"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+# Set up
+knitr::opts_chunk$set(echo = TRUE)
+options(warn = -1)
+setwd("/Users/lsjnancy/Desktop/STAT143/project")
+# install.packages("devtools")
+devtools::install_github("ryurko/nflWAR")
+
+# wpa_model_results_2017 = readRDS("wpa_model_results_2017.rds")
+# wpa_model_results_2017
+```
+
+
+# Building nlfWAR
+
+## Step 1: Get NFL data (2017)
+
+```{r}
+library(nflWAR)
+library(tidyverse)
+
+##### Step 1: Get NFL Data #####
+nfl2017 = get_pbp_data(2017)
+print(dim(nfl2017))
+print(colnames(nfl2017))
+print(head(nfl2017))
+```
+
+There are 103 variables in the file. The description of the variables can be found in this link: https://github.com/ryurko/nflscrapR-data/tree/master/legacy_data.
+
+
+## Step 2: Add player positions to play-by-play data
+
+```{r}
+##### Step 2: Add player positions to play-by-play data #####
+nfl2017 = add_positions(nfl2017, 2017)
+print(dim(nfl2017))
+nfl2017_last6 = nfl2017[, (ncol(nfl2017)-5):ncol(nfl2017)]
+print(colnames(nfl2017_last6))
+print(head(nfl2017_last6))
+```
+
+There are now a total of 109 variables in the data, with 6 variables added: 
+
+1. `Passer_ID_Name`: e.g., T.Brady-00-0019596
+2. `Receiver_ID_Name`: e.g., D.Allen-00-0029689
+3. `Rusher_ID_Name`: e.g., J.Hekker-None
+4. `Passer_Position`: e.g., QB
+5. `Receiver_Position`: e.g., TE
+6. `Rusher_Position`: e.g., NA
+
+Player positions: running backs (RB), wide receiver (WR), tight end (TE), and quarterback (QB).
+
+
+## Step 3: Add additional model variables to play-by-play data
+
+```{r}
+##### Step 3: Add additional model variables to play-by-play data #####
+nfl2017 = add_model_variables(nfl2017)
+print(dim(nfl2017))
+nfl2017_last8 = nfl2017[, (ncol(nfl2017)-7):ncol(nfl2017)]
+print(colnames(nfl2017_last8))
+print(head(nfl2017_last8))
+```
+
+There are now a total of 117 variables in the data, with 8 variables added: 
+
+1. `Shotgun_Ind`: Indicator whether or not the play was in shotgun.
+2. `No_Huddle_Ind`: Indicator whether or not the play was no huddle.
+3. `Home_Ind`: Indicator whether or not the possession team was home.
+4. `airEPA_Result`: airEPA for complete passes and EPA for incomplete.
+5. `airWPA_Result`: airWPA for complete passes and WPA for incomplete.
+6. `yacEPA_Result`: yacEPA for complete passes and EPA for incomplete.
+7. `yacWPA_Result``: yacWPA for complete passes and WPA for incomplete.
+8. `Team_Side_Gap`: Combine the team, side, and run gap for O-line proxy
+
+
+## Step 4: Filter the play-by-play data to data for modeling
+
+```{r}
+##### Step 4: Filter the play-by-play data to data for modeling #####
+nfl2017_model_dfs = prepare_model_data(nfl2017)
+pass_model_df2017 = nfl2017_model_dfs$pass_model_df
+rush_model_df2017 = nfl2017_model_dfs$rush_model_df
+
+cat("Passing play-by-play data:", dim(pass_model_df2017))
+pass_model_df2017_last10 = pass_model_df2017[
+  , (ncol(pass_model_df2017)-9):ncol(pass_model_df2017)]
+print(colnames(pass_model_df2017_last10))
+print(head(pass_model_df2017))
+
+cat("Rushing play-by-play data:", dim(rush_model_df2017))
+rush_model_df2017_last10 = rush_model_df2017[
+  , (ncol(rush_model_df2017)-9):ncol(rush_model_df2017)]
+print(colnames(rush_model_df2017))
+print(head(rush_model_df2017))
+```
+
+There are 2 dataframes (passing model and rushing model), each with a total of 127 variables.
+
+
+## Step 5: Create player tables for each position
+
+```{r}
+##### Step 5: Create player tables for each position #####
+# add_position_tables(model_data_list)
+# model_data_list: List of two dataframes (1) pass_model_df, (2) rush_model_df
+# return List of dataframes with the given model_data_list,
+# as well as the tables for each position containing player names/IDs, 
+# respective number of attempts for both passing/receiving and rushing/sacks.
+
+nfl2017_player_tables = add_position_tables(nfl2017_model_dfs)
+```
+
+
+## Step 6: Find replacement level for each position
+
+```{r}
+##### Step 6: Find replacement level for each position #####
+
+# create_percentage_replacement_fn(
+# 1. replacement_depth: Number indicating how many players of that position
+# and performance type each team should have, then every player have that will
+# be considered replacement level
+# 2. positions: String indicating which position(s) to find the replacement 
+# level for, can only be (1) "QB", (2) "RB" (or "FB"), (3) "WR", or (4) "TE"
+# 4. attempt_type: String indicating which type of attempts to use from position
+# tables to sort the players by for finding the league replacement level
+# 5. combine_wrte = 0: Indicator for whether or not to combine the TE and WR 
+# position tables, which will be primarily used for rushing attempts by 
+# WRs and TEs (default is 0).
+# )
+# return: function to find percentage based replacement level QBs
+# examples
+# Create replacement function for RBs by stating every team has 3 RBs on their
+# team for rushing, and every RB with less rushing attempts than the top 3*32 is
+# considered replacement level:
+# find_replacement_RB_rush=create_league_replacement_fn(3,"RB","Rush_Attempts")
+# replacement_RBs = find_replacement_RB_rush(model_data_list)
+# Here, our model_data_list is nfl2017_player_tables
+
+league_replacement_functions = 
+  list("find_replacement_QB" = 
+         create_percentage_replacement_fn("Perc_Total_Plays", .1),
+       "find_replacement_RB_rec" = 
+         create_league_replacement_fn(3, "RB", "Targets"),
+       "find_replacement_WR_rec" = 
+         create_league_replacement_fn(4, "WR", "Targets"),
+       "find_replacement_TE_rec" = 
+         create_league_replacement_fn(2, "TE", "Targets"),
+       "find_replacement_RB_rush" = 
+         create_league_replacement_fn(3, "RB", "Rush_Attempts"),
+       "find_replacement_WR_TE_rush" = 
+         create_league_replacement_fn(1, "WR", "Rush_Attempts", 
+                                      combine_wrte = 1))
+
+# find_positional_replacement_level(model_data_list, replacement_fns)
+# model_data_list is nfl2017_model_dfs
+# replacement_fns: A list of functions to find replacement levels of 
+# 1. QBs, 2. RBs for receiving plays, 3. WRs for receiving plays,
+# 4. TEs for receiving plays, 5. RBs for rushing plays, 
+# 6. WRs and TEs for rushing plays
+# return: the input model_data_list but with replacement-level
+# players' names in the play-by-play data all set to be
+# Replacement_POSITION and a new column for each of the
+# positional tables indicating which players are replacement
+# level.
+
+nfl2017_player_tables = find_positional_replacement_level(
+  nfl2017_player_tables, league_replacement_functions)
+# qb_table = nfl2017_player_tables$QB_table
+# rb_table = nfl2017_player_tables$RB_table
+# wr_table = nfl2017_player_tables$WR_table
+# te_table = nfl2017_player_tables$TE_table
+# cat("\nqb_table:", dim(qb_table))
+# print(head(qb_table))
+# cat("\nrb_table:", dim(rb_table))
+# print(head(rb_table))
+# cat("\nwr_table:", dim(wr_table))
+# print(head(wr_table))
+# cat("\nte_table:", dim(te_table))
+# print(head(te_table))
+```
+
+## Step 7: Calculate the 3 types iPA and iPAA values for each player
+
+```{r}
+##### Step 7: Calculate the 3 types iPA and iPAA values for each player #####
+
+### EPA-based WAR ###
+## 1. Create the expected points based model formulas: ##
+# e.g., (1 | Team_Side_Gap) specifies that a random intercept should be 
+# included for each level of Team_Side_Gap. 
+ep_model_formula_list = list(
+  "air_formula" = as.formula(
+    airEPA_Result ~ Home_Ind + Shotgun_Ind + No_Huddle_Ind + QBHit + 
+      Receiver_Position + PassLocation + Rush_EPA_Att +
+      (1|Passer_ID_Name) + (1|Receiver_ID_Name) + (1|DefensiveTeam)),
+  "yac_formula" = as.formula(
+    yacEPA_Result ~ Home_Ind + Shotgun_Ind + No_Huddle_Ind + QBHit +
+      AirYards*Receiver_Position + PassLocation + Rush_EPA_Att +
+      (1|Passer_ID_Name) + (1|Receiver_ID_Name) + (1|DefensiveTeam)),
+  "qb_rush_formula" = as.formula(
+    EPA ~ Home_Ind + Shotgun_Ind + No_Huddle_Ind + Pass_EPA_Att +
+      (1|Rusher_ID_Name) + (1|DefensiveTeam)),
+  "main_rush_formula" = as.formula(
+    EPA ~ Home_Ind + Shotgun_Ind + No_Huddle_Ind + Rusher_Position + 
+      Pass_EPA_Att + (1|Team_Side_Gap) + (1|Rusher_ID_Name) + (1|DefensiveTeam)))
+
+## 2. Calculate iPA and iPAA values ##
+# estimate_player_value_added(
+# 1. model_data_list: nfl2017_player_tables
+# 2. model_formula_list: ep_model_formula_list
+# 3. return_models = 1)
+# return: the original position tables from the input but add these columns:
+# air_iPA: Individual player points/probability added in the air.
+# yac_iPA: Individual player points/probability added after the catch.
+# rush_iPA: Individual player points/probability added from rushing.
+# air_iPAA: Individual player points/probability above average in the air.
+# yac_iPAA: Individual player points/probability above average after the catch.
+# rush_iPAA: Individual player points/probability above average from rushing.
+# and the resulting models:
+# air_model: Model fit for air component
+# yac_model: Model fit for yac component
+# qb_rush_model: Model fit for QB rushing/sacks
+# main_rush_model: Model for for all non-QB rushing attempts
+
+nfl2017_player_tables_ep = estimate_player_value_added(
+  nfl2017_player_tables, ep_model_formula_list, return_models = 1)
+# print("\nEP Example: QB_table and air_model")
+# qb_table_ep = nfl2017_player_tables_ep$QB_table
+# cat("\nQB_table:", dim(qb_table_ep))
+# print(head(qb_table_ep))
+# print("\nEP Air Model:")
+# print(summary(nfl2017_player_tables_ep$air_model))
+
+
+### WPA-based WAR ###
+## 1. Create the win probability based model formulas: ##
+wp_model_formula_list = list(
+  "air_formula" = as.formula(
+    airWPA_Result ~ Home_Ind + Shotgun_Ind + No_Huddle_Ind + QBHit +
+      Receiver_Position + PassLocation + Rush_EPA_Att +
+      (1|Passer_ID_Name) + (1|Receiver_ID_Name) + (1|DefensiveTeam)),
+  "yac_formula" = as.formula(
+    yacWPA_Result ~ Home_Ind + Shotgun_Ind + No_Huddle_Ind + QBHit +
+      AirYards*Receiver_Position + PassLocation + Rush_EPA_Att +
+      (1|Passer_ID_Name) + (1|Receiver_ID_Name) + (1|DefensiveTeam)),
+  "qb_rush_formula" = as.formula(
+    WPA ~ Home_Ind + Shotgun_Ind + No_Huddle_Ind + Pass_EPA_Att +
+      (1|Rusher_ID_Name) + (1|DefensiveTeam)),
+  "main_rush_formula" = as.formula(
+    WPA ~ Home_Ind + Shotgun_Ind + No_Huddle_Ind + 
+      Rusher_Position + Pass_EPA_Att +
+      (1|Team_Side_Gap) + (1|Rusher_ID_Name) + (1|DefensiveTeam)))
+
+## 2. Calculate iPA and iPAA values ##
+nfl2017_player_tables_wp = estimate_player_value_added(
+  nfl2017_player_tables, wp_model_formula_list, return_models = 1)
+# print("\nWP Example: QB_table and air_model")
+# qb_table_wp = nfl2017_player_tables_wp$QB_table
+# cat("\nQB_table:", dim(qb_table_wp))
+# print(head(qb_table_wp))
+# print("\nWP Air Model:")
+# print(summary(nfl2017_player_tables_wp$air_model))
+
+```
+
+## Step 8: Calculate above replacement level
+
+```{r}
+##### Step 8: Calculate above replacement level #####
+# calculate_above_replacement(model_data_list)
+# return: the input position tables with individual points/probability above 
+# replacement (iPAR) columns: air_iPAR, yac_iPAR, rush_iPAR, and total_iPAR
+
+# model_data_list: nfl2017_player_tables_ep, nfl2017_player_tables_wp
+
+### EPA-based WAR ###
+nfl2017_player_tables_ep = calculate_above_replacement(nfl2017_player_tables_ep)
+# print(head(nfl2017_player_tables_ep$QB_table))
+
+### WPA-based WAR ###
+nfl2017_player_tables_wp = calculate_above_replacement(nfl2017_player_tables_wp)
+```
+
+
+## Step 9: Convert points / probabilities to wins
+
+```{r}
+##### Step 9: Convert points / probabilities to wins #####
+library(knitr)
+
+### EPA-based WAR: Convert Points to Wins ###
+# convert_points_to_wins(model_data_list, points_per_win)
+# model_data_list: nfl2017_player_tables_ep
+# points_per_win: value indicating the number of points per win to use 
+# (i.e., result of function calculate_points_per_win(years=2017))
+points_per_win = calculate_points_per_win(years=2017)
+print(paste("points_per_win:", points_per_win))
+nfl2017_ep = convert_points_to_wins(nfl2017_player_tables_ep, points_per_win)
+print("\n##### EPA-based WAR #####")
+print("\nPlayer Tables By Position:")
+qb_table_ep = nfl2017_ep$QB_table; rb_table_ep = nfl2017_ep$RB_table
+wr_table_ep = nfl2017_ep$WR_table; te_table_ep = nfl2017_ep$TE_table
+cat("\nQB_table:", dim(qb_table_ep))
+kable(t(head(qb_table_ep, 2)))
+cat("\nRB_table:", dim(rb_table_ep))
+kable(t(head(rb_table_ep, 2)))
+cat("\nWR_table:", dim(wr_table_ep))
+kable(t(head(wr_table_ep, 2)))
+cat("\nTE_table:", dim(te_table_ep))
+kable(t(head(te_table_ep, 2)))
+print("\nEP Air Model:")
+print(summary(nfl2017_ep$air_model))
+print("\nEP YAC Model:")
+print(summary(nfl2017_ep$yac_model))
+print("\nEP Rush Model:")
+print(summary(nfl2017_ep$qb_rush_model))
+
+
+### WPA-based WAR: Convert Probabilities to Wins  ###
+# # convert_prob_to_wins(model_data_list)
+# model_data_list: nfl2017_player_tables_wp
+nfl2017_wp = convert_prob_to_wins(nfl2017_player_tables_wp)
+
+print("\n##### WPA-based WAR #####")
+print("\nPlayer Tables By Position:")
+qb_table_wp = nfl2017_wp$QB_table; rb_table_wp = nfl2017_wp$RB_table
+wr_table_wp = nfl2017_wp$WR_table; te_table_wp = nfl2017_wp$TE_table
+cat("\nQB_table:", dim(qb_table_wp))
+kable(t(head(qb_table_wp, 2)))
+cat("\nRB_table:", dim(rb_table_wp))
+kable(t(head(rb_table_wp, 2)))
+cat("\nWR_table:", dim(wr_table_wp))
+kable(t(head(wr_table_wp, 2)))
+cat("\nTE_table:", dim(te_table_wp))
+kable(t(head(te_table_wp, 2)))
+print("\nEP Air Model:")
+print(summary(nfl2017_wp$air_model))
+print("\nEP YAC Model:")
+print(summary(nfl2017_wp$yac_model))
+print("\nEP Rush Model:")
+print(summary(nfl2017_wp$qb_rush_model))
+
+```
+
+
+# Analyzing EPA-Based and WPA-Based Results
+
+```{r}
+# Combine EPA-Based WAR and WPA-BASED WAR results together #
+combine_epa_wpa = function(data_ep, data_wp) {
+  subset_cols = c("Player_ID_Name","air_WAR","yac_WAR","rush_WAR","total_WAR")
+  WAR_ep = data_ep[, subset_cols]
+  WAR_wp = data_wp[, subset_cols]
+  
+  WAR_columns = grepl("_WAR$", names(WAR_ep))
+  names(WAR_ep)[WAR_columns] = paste0(names(WAR_ep)[WAR_columns], "_EP")
+  names(WAR_wp)[WAR_columns] = paste0(names(WAR_wp[WAR_columns]), "_WP")
+  
+  WAR_all = left_join(WAR_ep, WAR_wp, by = "Player_ID_Name")
+  return (WAR_all)
+}
+
+qb_WAR_all = combine_epa_wpa(qb_table_ep, qb_table_wp)
+rb_WAR_all = combine_epa_wpa(rb_table_ep, rb_table_wp)
+wr_WAR_all = combine_epa_wpa(wr_table_ep, wr_table_wp)
+te_WAR_all = combine_epa_wpa(te_table_ep, te_table_wp)
+
+positions = c("QB", "RB", "WR", "TE")
+data_list = list(qb_WAR_all=qb_WAR_all, rb_WAR_all=rb_WAR_all, 
+                 wr_WAR_all=wr_WAR_all, te_WAR_all=te_WAR_all)
+
+for (i in 1:length(positions)) {
+  df = data_list[[i]]
+  pos = positions[i]
+  print(paste0("There are ", dim(df)[1], " ", pos, "s in the 2017 season."))
+}
+# knable(qb_WAR_all)
+```
+
+
+### 1) Distributions of EPA-Based and WPA-Based WAR By Player Position
+
+```{r plot_chunk1, fig.width=8, fig.height=8}
+plot_WAR_distributions = function(data_WAR, position, plot_title) {
+  print(summary(qb_WAR_all))
+  
+  par(mfrow = c(2, 2), oma = c(0, 0, 3, 0))
+  # total
+  x_range = range(c(data_WAR["total_WAR_EP"], data_WAR["total_WAR_WP"]))
+  hist(data_WAR[["total_WAR_EP"]], col = rgb(1, 0, 0, 0.5), 
+       xlim = c(x_range[1], x_range[2]),
+       main = paste(position, "total_WAR"), xlab = "total_WAR")
+  hist(data_WAR[["total_WAR_WP"]], col = rgb(0, 0, 1, 0.5), add = TRUE)
+  legend("topright", legend = c("EPA-Based", "WPA-Based"), 
+         fill = c(rgb(1, 0, 0, 0.5), rgb(0, 0, 1, 0.5)), cex = 0.75)
+  
+  # air
+  x_range = range(c(data_WAR["air_WAR_EP"], data_WAR["air_WAR_WP"]))
+  hist(data_WAR[["air_WAR_EP"]], col = rgb(1, 0, 0, 0.5), 
+       xlim = c(x_range[1], x_range[2]),
+       main = paste(position, "air_WAR"), xlab = "air_WAR")
+  hist(data_WAR[["air_WAR_WP"]], col = rgb(0, 0, 1, 0.5), add = TRUE)
+  legend("topright", legend = c("EPA-Based", "WPA-Based"), 
+         fill = c(rgb(1, 0, 0, 0.5), rgb(0, 0, 1, 0.5)), cex = 0.75)
+  
+  # yac
+  x_range = range(c(data_WAR["yac_WAR_EP"], data_WAR["yac_WAR_WP"]))
+  hist(data_WAR[["yac_WAR_EP"]], col = rgb(1, 0, 0, 0.5), 
+       xlim = c(x_range[1], x_range[2]),
+       main = paste(position, "yac_WAR"), xlab = "yac_WAR")
+  hist(data_WAR[["yac_WAR_WP"]], col = rgb(0, 0, 1, 0.5), add = TRUE)
+  legend("topright", legend = c("EPA-Based", "WPA-Based"), 
+         fill = c(rgb(1, 0, 0, 0.5), rgb(0, 0, 1, 0.5)), cex = 0.75)
+  
+  # rush
+  x_range = range(c(data_WAR["rush_WAR_EP"], data_WAR["rush_WAR_WP"]))
+  hist(data_WAR[["rush_WAR_EP"]], col = rgb(1, 0, 0, 0.5), 
+       xlim = c(x_range[1], x_range[2]),
+       main = paste(position, "rush_WAR"), xlab = "rush_WAR")
+  hist(data_WAR[["rush_WAR_WP"]], col = rgb(0, 0, 1, 0.5), add = TRUE)
+  legend("topright", legend = c("EPA-Based", "WPA-Based"), 
+         fill = c(rgb(1, 0, 0, 0.5), rgb(0, 0, 1, 0.5)), cex = 0.75)
+  
+  mtext(plot_title, side = 3, outer = TRUE, cex = 1.5, line = 1, font = 2)
+  
+  par(mfrow = c(1, 1))
+}
+
+plot_WAR_distributions(qb_WAR_all,"QB","WAR Distributions: Quarterback (QB)")
+plot_WAR_distributions(rb_WAR_all,"RB","WAR Distributions: Running back (RB)")
+plot_WAR_distributions(wr_WAR_all,"WR","WAR Distributions: Wide Receiver (WR)")
+plot_WAR_distributions(te_WAR_all,"TE","WAR Distributions: Tight End (TE)")
+```
+
+
+### 2) Correlations of EPA-Based and WPA-Based WAR By Player Position
+
+```{r plot_chunk2, fig.width=8, fig.height=8}
+plot_WAR_corr = function(data_WAR, plot_title) {
+  par(mfrow = c(2, 2), oma = c(0, 0, 3, 0))
+  WAR_list = c("total_WAR", "air_WAR", "yac_WAR", "rush_WAR")
+  for (i in 1:length(WAR_list)) {
+    col_ep = paste0(WAR_list[i], "_EP")
+    col_wp = paste0(WAR_list[i], "_WP")
+    corr = round(cor(data_WAR[[col_ep]], data_WAR[[col_wp]],
+                     method = "pearson"), 4)
+    plot(data_WAR[[col_ep]], data_WAR[[col_wp]], 
+         main=paste0(WAR_list[i], " EPA vs WPA (corr=", corr, ")"),
+         xlab=col_ep, ylab=col_wp)
+    model = lm(as.formula(paste(col_wp, "~", col_ep)), data=data_WAR)
+    abline(model, col = "red", lwd = 1)
+  }
+  mtext(plot_title, side = 3, outer = TRUE, cex = 1.5, line = 1, font = 2)
+  par(mfrow = c(1, 1))
+}
+
+plot_WAR_corr(qb_WAR_all, "WAR Correlations: Quarterback (QB)")
+plot_WAR_corr(rb_WAR_all, "WAR Correlations: Running back (RB)")
+plot_WAR_corr(wr_WAR_all, "WAR Correlations: Wide Receiver (WR)")
+plot_WAR_corr(te_WAR_all, "WAR Correlations: Tight End (TE)")
+
+```
+
+
+### 3) Top 10 Players Based on total_WAR By Player Position
+
+```{r plot_chunk3, fig.width=10, fig.height=8}
+# Top 10 players based on total WAR
+
+# Order data by descending order to match the plot's bottom-to-top fill
+library(ggplot2)
+library(patchwork)
+
+plot_top10_players = function(positions, margins_rt, data_list, 
+                             plot_title, ep=TRUE) {
+  plot_list = list()
+  for (i in 1:length(positions)) {
+    data_all = data_list[[i]]
+    data_top10 = head(data_all[order(-data_all[["total_WAR_EP"]]),], 10)
+    if (ep==TRUE) {
+      data_top10 = data_top10[c("Player_ID_Name", "air_WAR_EP",
+                              "yac_WAR_EP","rush_WAR_EP")]
+      data_long = pivot_longer(data_top10, cols = -Player_ID_Name, 
+                                names_to = "Component", 
+                                values_to = "WAR")
+      p = ggplot(data_long, aes(x = Player_ID_Name, y = WAR, fill = Component)) +
+        geom_bar(stat = "identity", position = "stack") +
+        labs(title = paste(positions[i], "WAR_EP"), 
+             x = "Player_ID_Name", y = "WAR") +
+        ylim(min(data_all[["total_WAR_EP"]]) - margins_rt[i], 
+             max(data_all[["total_WAR_EP"]]) + margins_rt[i]) +
+        coord_flip() + # Flip coordinates for horizontal bars +
+        theme_minimal() +
+        scale_fill_brewer(palette = "Pastel1") + 
+        theme(legend.position = "bottom", legend.key.size = unit(0.5, "cm"), 
+              legend.text = element_text(size = 8), 
+              legend.title = element_text(size = 0, face = "bold"))
+      # p = ggplot(data_top10, aes(x = reorder(Player_ID_Name, total_WAR_EP), 
+      #                    y = total_WAR_EP)) +
+      #   geom_bar(stat = "identity", position = "dodge", fill = "lightblue") +
+      #   ylim(min(data_all[["total_WAR_EP"]]), 
+      #        max(data_all[["total_WAR_EP"]]) + margins_rt[i]) +
+      #   coord_flip() + # Flip coordinates for horizontal bars +
+      #   geom_text(aes(label = round(total_WAR_EP, 4), hjust = -0.1), 
+      #             color = "black", size = 3) +
+      #   labs(title = paste(positions[i], "total_WAR_EP"), 
+      #        x = "Player_ID_Name", y = "total_WAR_EP") + 
+      #   theme_minimal()
+    } else {
+      data_top10 = data_top10[c("Player_ID_Name", "air_WAR_WP",
+                              "yac_WAR_WP","rush_WAR_WP")]
+      data_long = pivot_longer(data_top10, cols = -Player_ID_Name, 
+                                names_to = "Component", 
+                                values_to = "WAR")
+      p = ggplot(data_long, aes(x = Player_ID_Name, y = WAR, fill = Component)) +
+        geom_bar(stat = "identity", position = "stack") +
+        labs(title = paste(positions[i], "WAR_WP"), 
+             x = "Player_ID_Name", y = "WAR") +
+        ylim(min(data_all[["total_WAR_WP"]]) - margins_rt[i], 
+             max(data_all[["total_WAR_WP"]]) + margins_rt[i]) +
+        coord_flip() + # Flip coordinates for horizontal bars +
+        theme_minimal() +
+        scale_fill_brewer(palette = "Pastel1") + 
+        theme(legend.position = "bottom", legend.key.size = unit(0.5, "cm"), 
+              legend.text = element_text(size = 8), 
+              legend.title = element_text(size = 0, face = "bold"))
+      # p = ggplot(data_top10, aes(x = reorder(Player_ID_Name, total_WAR_WP), 
+      #                    y = total_WAR_WP)) +
+      #   geom_bar(stat = "identity", position = "dodge", fill = "lightpink") +
+      #   ylim(min(data_all[["total_WAR_WP"]]), 
+      #        max(data_all[["total_WAR_WP"]]) + margins_rt[i]) +
+      #   coord_flip() + # Flip coordinates for horizontal bars +
+      #   geom_text(aes(label = round(total_WAR_WP, 4), hjust = -0.1), 
+      #             color = "black", size = 3) +
+      #   labs(title = paste(positions[i], "total_WAR_WP"), 
+      #        x = "Player_ID_Name", y = "total_WAR_WP") + 
+      #   theme_minimal()
+    }
+    
+    plot_list[[i]] = p
+  }
+  
+  # Combine the plots
+  combined_plot = plot_list[[1]]+plot_list[[2]]+plot_list[[3]]+plot_list[[4]] + 
+    plot_layout(ncol = 2) +
+    plot_annotation(
+      title = plot_title,
+      theme = theme(
+        plot.title = element_text(size = 20, face = "bold", hjust = 0.5)
+      )
+    )
+  print(combined_plot)
+}
+
+positions = c("QB", "RB", "WR", "TE")
+margins_rt = c(1, 0.5, 0.5, 0.1)
+
+top10_players_ep = plot_top10_players(positions, margins_rt, data_list, 
+                             "Top 10 Players: Total EPA-Based WAR", ep=TRUE)
+top10_players_wp = plot_top10_players(positions, margins_rt, data_list, 
+                             "Top 10 Players: Total WPA-Based WAR", ep=FALSE)
+
+```
+
+
+
